@@ -150,7 +150,23 @@ async def add_warning(guild, user, moderator, reason):
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
+    # Add startup delay to prevent rate limiting
+    await asyncio.sleep(2)
+    
+    try:
+        await bot.tree.sync()
+    except discord.errors.HTTPException as e:
+        if e.status == 429:
+            retry_after = int(e.response.headers.get('Retry-After', 60))
+            print(f"Rate limited during sync. Waiting {retry_after} seconds...")
+            await asyncio.sleep(retry_after)
+            try:
+                await bot.tree.sync()
+            except Exception as retry_error:
+                print(f"Retry failed: {retry_error}")
+    except Exception as e:
+        print(f"Error syncing commands: {e}")
+    
     print(f"Bot logged in as {bot.user}")
     
     # Start web server on first ready
