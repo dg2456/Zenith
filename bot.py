@@ -21,16 +21,21 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 
 # Web server for Render
 async def health_check(request):
-    return web.Response(text="Bot is running", status=200)
+    return web.Response(text="Bot is running")
 
 async def start_web_server():
     app = web.Application()
-    app.router.add_get('/', health_check)
+    app.router.add_get("/", health_check)
+
+    port = int(os.environ.get("PORT", 10000))
+
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 10000)
+
+    site = web.TCPSite(runner, host="0.0.0.0", port=port)
     await site.start()
-    print("Web server started on port 10000")
+
+    print(f"Web server started on port {port}")
 
 # Channel IDs
 MODERATION_LOG_CHANNEL = 1497742120080117781
