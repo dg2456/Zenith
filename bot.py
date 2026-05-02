@@ -68,6 +68,7 @@ USER_DATA_FILE = "user_data.json"
 BAN_TRACKER_FILE = "ban_tracker.json"
 CHANNEL_OVERRIDES_FILE = "channel_overrides.json"
 OPEN_APPS_FILE = "open_applications.json"
+WHITELIST_FILE = "whitelist.json"
 
 def load_json(filename):
     if os.path.exists(filename):
@@ -179,8 +180,12 @@ async def on_message(message):
     if message.author == bot.user:
         return
     
-    # Anti invite link
-    if "discord.gg/" in message.content or "discord.com/invite/" in message.content:
+    # Check if user is whitelisted
+    whitelist = load_json(WHITELIST_FILE)
+    is_whitelisted = str(message.author.id) in whitelist
+    
+    # Anti invite link (unless whitelisted)
+    if not is_whitelisted and ("discord.gg/" in message.content or "discord.com/invite/" in message.content):
         await message.delete()
         try:
             await message.author.send("Invite links are not allowed in this server.")
@@ -234,6 +239,12 @@ async def ban(interaction: discord.Interaction, user: discord.User, reason: str,
         await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
         return
     
+    # Check if user is whitelisted
+    whitelist = load_json(WHITELIST_FILE)
+    if str(user.id) in whitelist:
+        await interaction.response.send_message("Cannot moderate whitelisted users.", ephemeral=True)
+        return
+    
     guild = interaction.guild
     ban_tracker = load_json(BAN_TRACKER_FILE)
     
@@ -284,6 +295,12 @@ async def mute(interaction: discord.Interaction, user: discord.User, reason: str
         await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
         return
     
+    # Check if user is whitelisted
+    whitelist = load_json(WHITELIST_FILE)
+    if str(user.id) in whitelist:
+        await interaction.response.send_message("Cannot moderate whitelisted users.", ephemeral=True)
+        return
+    
     guild = interaction.guild
     member = await guild.fetch_member(user.id)
     
@@ -322,6 +339,12 @@ async def mute(interaction: discord.Interaction, user: discord.User, reason: str
 async def warn(interaction: discord.Interaction, user: discord.User, reason: str):
     if not has_role(interaction.user, MODERATION_ROLES):
         await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        return
+    
+    # Check if user is whitelisted
+    whitelist = load_json(WHITELIST_FILE)
+    if str(user.id) in whitelist:
+        await interaction.response.send_message("Cannot moderate whitelisted users.", ephemeral=True)
         return
     
     guild = interaction.guild
@@ -933,7 +956,94 @@ class AppReasonModal(discord.ui.Modal):
         app_data["result"] = "accepted" if self.approved else "denied"
         save_json("applications.json", applications_data)
         
+        # Assign roles if accepted
+        if self.approved:
+            guild = interaction.guild
+            member = await guild.fetch_member(self.user.id)
+            
+            # Role mappings for each application
+            role_mappings = {
+                "Risk Management": [1497645064623493142, 1497638380337500330, 1497639703443148861],
+                "Customer Support": [1497639703443148861, 1497637827922624662, 1497646855511867442],
+                "Public Relations": [1497651581838037212, 1497651516138323968, 1497639703443148861]
+            }
+            
+            roles_to_add = role_mappings.get(app_name, [])
+            for role_id in roles_to_add:
+                role = guild.get_role(role_id)
+                if role:
+                    await member.add_roles(role)
+        
         await interaction.response.send_message(f"Application {'accepted' if self.approved else 'denied'}.", ephemeral=True)
+
+        await interaction.response.send_message(f"Application {'accepted' if self.approved else 'denied'}.", ephemeral=True)
+
+# Whitelist Commands
+
+@bot.tree.command(name="whitelist_add", description="Add user to whitelist (immune to moderation)")
+@app_commands.describe(user="User to whitelist")
+async def whitelist_add(interaction: discord.Interaction, user: discord.User):
+    if not has_role(interaction.user, ADMIN_ROLES):
+        await interaction.response.send_message("Only admins can use this command", ephemeral=True)
+        return
+    
+    whitelist = load_json(WHITELIST_FILE)
+    user_id = str(user.id)
+    
+    if user_id not in whitelist:
+        whitelist[user_id] = True
+        save_json(WHITELIST_FILE, whitelist)
+        
+        # Log action
+        guild = interaction.guild
+        await log_moderation(guild, "WHITELIST ADD", user, interaction.user, "User added to whitelist")
+        
+        await interaction.response.send_message(f"User {user} has been added to whitelist.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"User {user} is already whitelisted.", ephemeral=True)
+
+@bot.tree.command(name="whitelist_remove", description="Remove user from whitelist")
+@app_commands.describe(user="User to remove from whitelist")
+async def whitelist_remove(interaction: discord.Interaction, user: discord.User):
+    if not has_role(interaction.user, ADMIN_ROLES):
+        await interaction.response.send_message("Only admins can use this command", ephemeral=True)
+        return
+    
+    whitelist = load_json(WHITELIST_FILE)
+    user_id = str(user.id)
+    
+    if user_id in whitelist:
+        del whitelist[user_id]
+        save_json(WHITELIST_FILE, whitelist)
+        
+        # Log action
+        guild = interaction.guild
+        await log_moderation(guild, "WHITELIST REMOVE", user, interaction.user, "User removed from whitelist")
+        
+        await interaction.response.send_message(f"User {user} has been removed from whitelist.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"User {user} is not whitelisted.", ephemeral=True)
+
+# Say Command
+
+@bot.tree.command(name="say", description="Make the bot say a message in a channel")
+@app_commands.describe(channel="Channel to send message to", message="Message to send")
+async def say(interaction: discord.Interaction, channel: discord.TextChannel, message: str):
+    if not has_role(interaction.user, RANKING_ROLES):
+        await interaction.response.send_message("Rank too low to execute this command", ephemeral=True)
+        return
+    
+    guild = interaction.guild
+    
+    try:
+        await channel.send(message)
+        
+        # Log action
+        await log_moderation(guild, "SAY COMMAND", channel, interaction.user, f"Message: {message}")
+        
+        await interaction.response.send_message(f"Message sent to {channel.mention}", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"Failed to send message: {str(e)}", ephemeral=True)
 
 # Run bot
 if __name__ == "__main__":
