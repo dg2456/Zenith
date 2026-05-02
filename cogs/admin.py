@@ -5,8 +5,7 @@ Commands:
   /notify  <member> <action> <product>  — push a license notification to a Zenith user
   /syncban <member> <reason>            — manually sync a ban to Zenith
   /rolecheck <member>                   — force a role sync for a single member
-  /lookup discord <member>              — quick account lookup (alias of /licenses discord)
-  /lookup roblox  <username>            — quick account lookup (alias of /licenses roblox)
+  /rolemap                              — show the current Discord → Zenith role mapping
 """
 
 import os
@@ -14,18 +13,15 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import aiohttp
+from config import GUILD_ID, MOD_LOG_CHANNEL_ID, PURCHASE_LOG_CHANNEL_ID
 
 API_URL    = os.getenv("ZENITH_API_URL", "").rstrip("/")
 BOT_SECRET = os.getenv("DISCORD_BOT_SECRET", "")
-GUILD_ID   = int(os.getenv("GUILD_ID", "1497396093506551909"))
 
 HEADERS = {
     "Content-Type": "application/json",
     "x-bot-secret": BOT_SECRET,
 }
-
-# Only members with one of these role IDs may use admin commands
-ALLOWED_ROLE_IDS: set[int] = set()  # leave empty to allow all staff — or add role IDs
 
 
 def _check_api() -> bool:
@@ -52,6 +48,15 @@ async def _get(url: str) -> tuple[int, dict]:
             return resp.status, body
 
 
+async def _send_log(bot: commands.Bot, channel_id: int, embed: discord.Embed):
+    try:
+        channel = bot.get_channel(channel_id)
+        if channel:
+            await channel.send(embed=embed)
+    except Exception:
+        pass
+
+
 class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -68,7 +73,7 @@ class Admin(commands.Cog):
     )
     @app_commands.choices(action=[
         app_commands.Choice(name="Granted", value="granted"),
-        app_commands.Choice(name="Revoked", value="revoked"),
+        app_commands.Choice(name="Revoked",  value="revoked"),
     ])
     async def notify(
         self,
@@ -95,6 +100,17 @@ class Admin(commands.Cog):
                 f"license **{action.name.lower()}** for `{product}`.",
                 ephemeral=True,
             )
+
+            # Log to purchase log channel
+            embed = discord.Embed(
+                title=f"{'✅ License Granted' if action.value == 'granted' else '🗑️ License Revoked'}",
+                color=discord.Color.green() if action.value == "granted" else discord.Color.red(),
+            )
+            embed.add_field(name="Member",  value=f"{member.mention} (`{member.id}`)", inline=True)
+            embed.add_field(name="Product", value=product,                              inline=True)
+            embed.add_field(name="By",      value=str(interaction.user),               inline=True)
+            await _send_log(self.bot, PURCHASE_LOG_CHANNEL_ID, embed)
+
         elif status == 404:
             await interaction.followup.send(
                 f"❌ **{member.display_name}** has no linked Zenith account.", ephemeral=True
@@ -136,6 +152,13 @@ class Admin(commands.Cog):
                 f"Reason: {reason}",
                 ephemeral=True,
             )
+
+            embed = discord.Embed(title="🔨 Manual Ban Sync", color=discord.Color.red())
+            embed.add_field(name="Member", value=f"{member} (`{member.id}`)", inline=True)
+            embed.add_field(name="Reason", value=reason,                      inline=False)
+            embed.add_field(name="By",     value=str(interaction.user),       inline=True)
+            await _send_log(self.bot, MOD_LOG_CHANNEL_ID, embed)
+
         elif status == 404:
             await interaction.followup.send(
                 f"⚠️ **{member.display_name}** has no linked Zenith account. "
@@ -214,8 +237,8 @@ class Admin(commands.Cog):
         junior_name = junior_role.name if junior_role else f"ID:{junior}"
 
         embed = discord.Embed(title="🗺️ Zenith Role Map", color=discord.Color.blurple())
-        embed.add_field(name="Mappings",    value="\n".join(lines) or "None", inline=False)
-        embed.add_field(name="Junior (blocks RM)", value=f"`{junior_name}`", inline=False)
+        embed.add_field(name="Mappings",           value="\n".join(lines) or "None", inline=False)
+        embed.add_field(name="Junior (blocks RM)", value=f"`{junior_name}`",         inline=False)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 
