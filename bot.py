@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import asyncio
 from typing import Optional
 from dotenv import load_dotenv
+from aiohttp import web
 
 # Load environment variables
 load_dotenv()
@@ -17,6 +18,19 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="/", intents=intents)
+
+# Web server for Render
+async def health_check(request):
+    return web.Response(text="Bot is running", status=200)
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 10000)
+    await site.start()
+    print("Web server started on port 10000")
 
 # Channel IDs
 MODERATION_LOG_CHANNEL = 1497742120080117781
@@ -133,6 +147,11 @@ async def add_warning(guild, user, moderator, reason):
 async def on_ready():
     await bot.tree.sync()
     print(f"Bot logged in as {bot.user}")
+    
+    # Start web server on first ready
+    if not hasattr(bot, 'web_server_started'):
+        asyncio.create_task(start_web_server())
+        bot.web_server_started = True
 
 @bot.event
 async def on_message(message):
