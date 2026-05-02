@@ -6,6 +6,11 @@ import os
 from datetime import datetime, timedelta
 import asyncio
 from typing import Optional
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+TOKEN = os.getenv('DISCORD_TOKEN')
 
 # Bot setup
 intents = discord.Intents.default()
@@ -183,7 +188,7 @@ async def on_message_delete(message):
 # Moderation Commands
 
 @bot.tree.command(name="ban", description="Ban a user")
-@app_commands.describe(user="User to ban", reason="Reason for ban", delete_messages="Days of messages to delete (1d/5d/7d)", delete_option="Message deletion period")
+@app_commands.describe(user="User to ban", reason="Reason for ban", delete_option="Message deletion period (1d/5d/7d)")
 async def ban(interaction: discord.Interaction, user: discord.User, reason: str, delete_option: str = None):
     if not has_role(interaction.user, MODERATION_ROLES):
         await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
@@ -390,7 +395,7 @@ async def infract(interaction: discord.Interaction, user: discord.User, reason: 
 @bot.tree.command(name="rank", description="Modify user roles")
 @app_commands.describe(
     user="User to modify",
-    role_add_1="First role to add",
+    role_add_1="First role to add (optional)",
     role_add_2="Second role to add (optional)",
     role_add_3="Third role to add (optional)",
     role_remove_1="First role to remove (optional)",
@@ -400,7 +405,7 @@ async def infract(interaction: discord.Interaction, user: discord.User, reason: 
 async def rank(
     interaction: discord.Interaction,
     user: discord.User,
-    role_add_1: discord.Role,
+    role_add_1: Optional[discord.Role] = None,
     role_add_2: Optional[discord.Role] = None,
     role_add_3: Optional[discord.Role] = None,
     role_remove_1: Optional[discord.Role] = None,
@@ -428,6 +433,10 @@ async def rank(
         if role:
             await member.remove_roles(role)
             roles_removed.append(role.mention)
+    
+    if not roles_added and not roles_removed:
+        await interaction.response.send_message("No roles were specified to add or remove.", ephemeral=True)
+        return
     
     details = ""
     if roles_added:
@@ -614,7 +623,7 @@ async def user_history(interaction: discord.Interaction, user: discord.User):
 
 # Application Commands
 
-@bot.tree.command(name="application_channel", description="Set application channel")
+@bot.tree.command(name="application_channel", description="Open application menu")
 async def application_channel(interaction: discord.Interaction):
     if not has_role(interaction.user, APPLICATION_ROLES):
         await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
@@ -888,4 +897,4 @@ class AppReasonModal(discord.ui.Modal):
 
 # Run bot
 if __name__ == "__main__":
-    bot.run("YOUR_TOKEN_HERE")
+    bot.run(TOKEN)
