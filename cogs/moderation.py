@@ -10,11 +10,10 @@ import os
 import discord
 from discord.ext import commands
 import aiohttp
+from config import GUILD_ID, MOD_LOG_CHANNEL_ID
 
 API_URL    = os.getenv("ZENITH_API_URL", "").rstrip("/")
 BOT_SECRET = os.getenv("DISCORD_BOT_SECRET", "")
-GUILD_ID   = int(os.getenv("GUILD_ID", "1497396093506551909"))
-MOD_LOG_CH = os.getenv("MOD_LOG_CHANNEL_ID", "")
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -33,10 +32,8 @@ async def _post(url: str, payload: dict) -> tuple[int, dict]:
 
 
 async def _send_mod_log(bot: commands.Bot, embed: discord.Embed):
-    if not MOD_LOG_CH:
-        return
     try:
-        channel = bot.get_channel(int(MOD_LOG_CH))
+        channel = bot.get_channel(MOD_LOG_CHANNEL_ID)
         if channel:
             await channel.send(embed=embed)
     except Exception:
@@ -81,7 +78,6 @@ class Moderation(commands.Cog):
         if not API_URL:
             return
 
-        # Fetch audit log to get the ban reason
         reason = "Banned from Discord server"
         try:
             async for entry in guild.audit_logs(action=discord.AuditLogAction.ban, limit=5):
