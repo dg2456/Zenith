@@ -1,1 +1,223 @@
+"""
+admin.py — staff slash commands
 
+Commands:
+  /notify  <member> <action> <product>  — push a license notification to a Zenith user
+  /syncban <member> <reason>            — manually sync a ban to Zenith
+  /rolecheck <member>                   — force a role sync for a single member
+  /lookup discord <member>              — quick account lookup (alias of /licenses discord)
+  /lookup roblox  <username>            — quick account lookup (alias of /licenses roblox)
+"""
+
+import os
+import discord
+from discord import app_commands
+from discord.ext import commands
+import aiohttp
+
+API_URL    = os.getenv("ZENITH_API_URL", "").rstrip("/")
+BOT_SECRET = os.getenv("DISCORD_BOT_SECRET", "")
+GUILD_ID   = int(os.getenv("GUILD_ID", "1497396093506551909"))
+
+HEADERS = {
+    "Content-Type": "application/json",
+    "x-bot-secret": BOT_SECRET,
+}
+
+# Only members with one of these role IDs may use admin commands
+ALLOWED_ROLE_IDS: set[int] = set()  # leave empty to allow all staff — or add role IDs
+
+
+def _check_api() -> bool:
+    return bool(API_URL and BOT_SECRET)
+
+
+async def _post(url: str, payload: dict) -> tuple[int, dict]:
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
+        async with session.post(url, json=payload) as resp:
+            try:
+                body = await resp.json()
+            except Exception:
+                body = {}
+            return resp.status, body
+
+
+async def _get(url: str) -> tuple[int, dict]:
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
+        async with session.get(url) as resp:
+            try:
+                body = await resp.json()
+            except Exception:
+                body = {}
+            return resp.status, body
+
+
+class Admin(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    # ── /notify ───────────────────────────────────────────────────────────
+    @app_commands.command(
+        name="notify",
+        description="[Staff] Push a license granted/revoked notification to a Zenith user.",
+    )
+    @app_commands.describe(
+        member="The Discord member to notify.",
+        action="Whether the license was granted or revoked.",
+        product="The exact product name.",
+    )
+    @app_commands.choices(action=[
+        app_commands.Choice(name="Granted", value="granted"),
+        app_commands.Choice(name="Revoked", value="revoked"),
+    ])
+    async def notify(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        action: app_commands.Choice[str],
+        product: str,
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        if not _check_api():
+            await interaction.followup.send("❌ API not configured.", ephemeral=True)
+            return
+
+        status, data = await _post(
+            f"{API_URL}/api/discord/license-notify",
+            {"discordId": str(member.id), "action": action.value, "productName": product},
+        )
+
+        if status == 200:
+            emoji = "✅" if action.value == "granted" else "🗑️"
+            await interaction.followup.send(
+                f"{emoji} Notification sent to **{member.display_name}**: "
+                f"license **{action.name.lower()}** for `{product}`.",
+                ephemeral=True,
+            )
+        elif status == 404:
+            await interaction.followup.send(
+                f"❌ **{member.display_name}** has no linked Zenith account.", ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                f"❌ API error `{status}`: {data.get('error', 'Unknown error')}", ephemeral=True
+            )
+
+    # ── /syncban ──────────────────────────────────────────────────────────
+    @app_commands.command(
+        name="syncban",
+        description="[Staff] Manually sync a Discord ban to Zenith.",
+    )
+    @app_commands.describe(
+        member="The Discord member (use their ID if they are not in the server).",
+        reason="Reason for the ban.",
+    )
+    async def syncban(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        reason: str,
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        if not _check_api():
+            await interaction.followup.send("❌ API not configured.", ephemeral=True)
+            return
+
+        status, data = await _post(
+            f"{API_URL}/api/discord/ban-sync",
+            {"discordId": str(member.id), "reason": reason},
+        )
+
+        if status == 200:
+            await interaction.followup.send(
+                f"🔨 **{member.display_name}** (`{member.id}`) has been banned on Zenith.\n"
+                f"Reason: {reason}",
+                ephemeral=True,
+            )
+        elif status == 404:
+            await interaction.followup.send(
+                f"⚠️ **{member.display_name}** has no linked Zenith account. "
+                f"The Discord ban was not synced.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(
+                f"❌ API error `{status}`: {data.get('error', 'Unknown')}", ephemeral=True
+            )
+
+    # ── /rolecheck ────────────────────────────────────────────────────────
+    @app_commands.command(
+        name="rolecheck",
+        description="[Staff] Force a Zenith role sync for a specific member.",
+    )
+    @app_commands.describe(member="The Discord member to sync.")
+    async def rolecheck(self, interaction: discord.Interaction, member: discord.Member):
+        await interaction.response.defer(ephemeral=True)
+
+        if not _check_api():
+            await interaction.followup.send("❌ API not configured.", ephemeral=True)
+            return
+
+        role_ids = [str(r.id) for r in member.roles]
+        status, data = await _post(
+            f"{API_URL}/api/discord/role-sync",
+            {"discordId": str(member.id), "roleIds": role_ids},
+        )
+
+        if status == 200:
+            new_role = data.get("role", "unchanged")
+            await interaction.followup.send(
+                f"✅ Role sync complete for **{member.display_name}**.\n"
+                f"Zenith role → **{new_role.replace('_', ' ').title()}**",
+                ephemeral=True,
+            )
+        elif status == 404:
+            await interaction.followup.send(
+                f"❌ **{member.display_name}** has no linked Zenith account.", ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                f"❌ API error `{status}`: {data.get('error', 'Unknown')}", ephemeral=True
+            )
+
+    # ── /rolemap ──────────────────────────────────────────────────────────
+    @app_commands.command(
+        name="rolemap",
+        description="[Staff] Show the current Discord → Zenith role mapping.",
+    )
+    async def rolemap(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        if not _check_api():
+            await interaction.followup.send("❌ API not configured.", ephemeral=True)
+            return
+
+        status, data = await _get(f"{API_URL}/api/discord/role-map")
+
+        if status != 200:
+            await interaction.followup.send(f"❌ API error `{status}`", ephemeral=True)
+            return
+
+        mappings = data.get("roleMappings", {})
+        junior   = data.get("juniorRoleId", "—")
+        guild    = interaction.guild
+
+        lines = []
+        for role_id, zenith_role in mappings.items():
+            discord_role = guild.get_role(int(role_id)) if guild else None
+            name = discord_role.name if discord_role else f"ID:{role_id}"
+            lines.append(f"`{name}` → **{zenith_role.replace('_', ' ').title()}**")
+
+        junior_role = guild.get_role(int(junior)) if guild and junior != "—" else None
+        junior_name = junior_role.name if junior_role else f"ID:{junior}"
+
+        embed = discord.Embed(title="🗺️ Zenith Role Map", color=discord.Color.blurple())
+        embed.add_field(name="Mappings",    value="\n".join(lines) or "None", inline=False)
+        embed.add_field(name="Junior (blocks RM)", value=f"`{junior_name}`", inline=False)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Admin(bot))
