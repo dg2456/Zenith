@@ -976,8 +976,6 @@ class AppReasonModal(discord.ui.Modal):
         
         await interaction.response.send_message(f"Application {'accepted' if self.approved else 'denied'}.", ephemeral=True)
 
-        await interaction.response.send_message(f"Application {'accepted' if self.approved else 'denied'}.", ephemeral=True)
-
 # Whitelist Commands
 
 @bot.tree.command(name="whitelist_add", description="Add user to whitelist (immune to moderation)")
