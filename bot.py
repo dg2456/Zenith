@@ -8,6 +8,7 @@ import asyncio
 from typing import Optional
 from dotenv import load_dotenv
 from aiohttp import web
+from config import GUILD_ID
 
 # Load environment variables
 load_dotenv()
@@ -17,9 +18,29 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-bot = commands.Bot(command_prefix="/", intents=intents)
 
-# Web server for Render
+# ── ZenithBot class ────────────────────────────────────────────────────────
+# Subclassing Bot so we can use setup_hook to load Zenith cogs and sync
+# slash commands instantly to the guild.
+class ZenithBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="/", intents=intents)
+
+    async def setup_hook(self):
+        # Load Zenith API-linked cogs
+        await self.load_extension("cogs.licenses")
+        await self.load_extension("cogs.moderation")
+        await self.load_extension("cogs.admin")
+
+        # Copy global commands to guild so they appear instantly (no 1-hour delay)
+        guild = discord.Object(id=GUILD_ID)
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
+        print(f"[Zenith] Synced slash commands to guild {GUILD_ID}")
+
+bot = ZenithBot()
+
+# ── Web server for Render ──────────────────────────────────────────────────
 async def health_check(request):
     return web.Response(text="Bot is running")
 
@@ -168,7 +189,14 @@ async def on_ready():
     except Exception as e:
         print(f"Error syncing commands: {e}")
     
-    print(f"Bot logged in as {bot.user}")
+    print(f"[Zenith] Logged in as {bot.user} (ID: {bot.user.id})")
+
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name="Zenith Development"
+        )
+    )
     
     # Start web server on first ready
     if not hasattr(bot, 'web_server_started'):
@@ -230,7 +258,7 @@ async def on_message_delete(message):
         embed.add_field(name="Content", value=message.content[:1024] if message.content else "No content", inline=False)
         await channel.send(embed=embed)
 
-# Moderation Commands
+# ── Moderation Commands ────────────────────────────────────────────────────
 
 @bot.tree.command(name="ban", description="Ban a user")
 @app_commands.describe(user="User to ban", reason="Reason for ban", delete_option="Message deletion period (1d/5d/7d)")
@@ -354,7 +382,7 @@ async def warn(interaction: discord.Interaction, user: discord.User, reason: str
     await log_moderation(guild, "WARN", member, interaction.user, reason, f"Total warnings: {warnings}/5")
     await interaction.response.send_message(f"User {user} has been warned. ({warnings}/5)", ephemeral=True)
 
-# Ranking Commands
+# ── Ranking Commands ───────────────────────────────────────────────────────
 
 @bot.tree.command(name="promote", description="Promote a user")
 @app_commands.describe(user="User to promote", reason="Reason for promotion", new_rank="New rank to assign")
@@ -398,7 +426,7 @@ async def promote(interaction: discord.Interaction, user: discord.User, reason: 
         embed.add_field(name="Promoted By", value=interaction.user.mention, inline=False)
         await channel.send(embed=embed, content=member.mention)
     
-    # DM user (doesn't mention moderator for promotions)
+    # DM user
     try:
         await member.send(f"You have been promoted to {new_rank.mention}! Reason: {reason}")
     except:
@@ -510,7 +538,7 @@ async def rank(
     await log_role_change(guild, "RANK MODIFICATION", member, details)
     await interaction.response.send_message(f"User {user} roles have been modified.", ephemeral=True)
 
-# Lockdown Commands
+# ── Lockdown Commands ──────────────────────────────────────────────────────
 
 @bot.tree.command(name="lock", description="Lock a channel")
 @app_commands.describe(channel="Channel to lock", reason="Reason for lock", time="Lock duration (optional)")
@@ -648,7 +676,7 @@ async def lockdown_end(interaction: discord.Interaction, reason: str = ""):
     await log_moderation(guild, "LOCKDOWN END", guild, interaction.user, reason)
     await interaction.response.send_message("Server lockdown ended.", ephemeral=True)
 
-# User History Command
+# ── User History Command ───────────────────────────────────────────────────
 
 @bot.tree.command(name="user_history", description="View user history")
 @app_commands.describe(user="User to check")
@@ -684,7 +712,7 @@ async def user_history(interaction: discord.Interaction, user: discord.User):
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# Application Commands
+# ── Application Commands ───────────────────────────────────────────────────
 
 @bot.tree.command(name="application_channel", description="Open application menu")
 async def application_channel(interaction: discord.Interaction):
@@ -976,7 +1004,7 @@ class AppReasonModal(discord.ui.Modal):
         
         await interaction.response.send_message(f"Application {'accepted' if self.approved else 'denied'}.", ephemeral=True)
 
-# Whitelist Commands
+# ── Whitelist Commands ─────────────────────────────────────────────────────
 
 @bot.tree.command(name="whitelist_add", description="Add user to whitelist (immune to moderation)")
 @app_commands.describe(user="User to whitelist")
@@ -992,7 +1020,6 @@ async def whitelist_add(interaction: discord.Interaction, user: discord.User):
         whitelist[user_id] = True
         save_json(WHITELIST_FILE, whitelist)
         
-        # Log action
         guild = interaction.guild
         await log_moderation(guild, "WHITELIST ADD", user, interaction.user, "User added to whitelist")
         
@@ -1014,7 +1041,6 @@ async def whitelist_remove(interaction: discord.Interaction, user: discord.User)
         del whitelist[user_id]
         save_json(WHITELIST_FILE, whitelist)
         
-        # Log action
         guild = interaction.guild
         await log_moderation(guild, "WHITELIST REMOVE", user, interaction.user, "User removed from whitelist")
         
@@ -1022,7 +1048,7 @@ async def whitelist_remove(interaction: discord.Interaction, user: discord.User)
     else:
         await interaction.response.send_message(f"User {user} is not whitelisted.", ephemeral=True)
 
-# Say Command
+# ── Say Command ────────────────────────────────────────────────────────────
 
 @bot.tree.command(name="say", description="Make the bot say a message in a channel")
 @app_commands.describe(channel="Channel to send message to", message="Message to send")
@@ -1035,14 +1061,14 @@ async def say(interaction: discord.Interaction, channel: discord.TextChannel, me
     
     try:
         await channel.send(message)
-        
-        # Log action
         await log_moderation(guild, "SAY COMMAND", channel, interaction.user, f"Message: {message}")
-        
         await interaction.response.send_message(f"Message sent to {channel.mention}", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"Failed to send message: {str(e)}", ephemeral=True)
 
-# Run bot
+# ── Run ────────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
-    bot.run(TOKEN)
+    if not TOKEN:
+        raise RuntimeError("DISCORD_TOKEN is not set in your .env file")
+    asyncio.run(bot.start(TOKEN))
