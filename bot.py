@@ -434,103 +434,167 @@ def setup_commands(bot: ZenithBot):
     # ── Lockdown ──────────────────────────────────────────────────────────────
 
     @bot.tree.command(name="lock", description="Lock a channel")
-    @app_commands.describe(channel="Channel to lock", reason="Reason", time="Duration (optional)")
-    async def lock(interaction: discord.Interaction, channel: discord.TextChannel, reason: str, time: str = None):
-        try:
-            if not has_role(interaction.user, LOCKDOWN_ROLES):
-                await interaction.response.send_message("Your rank is too low.", ephemeral=True); return
-            guild = interaction.guild
-            overrides = load_json(CHANNEL_OVERRIDES_FILE)
-            cid = str(channel.id)
-            overrides.setdefault(cid, {})
-            for role, ow in channel.overwrites.items():
-                if isinstance(role, discord.Role):
-                    overrides[cid][str(role.id)] = {"send": ow.send_messages.value if ow.send_messages else None}
-            await channel.set_permissions(guild.default_role, send_messages=False)
-            for rid in LOCKDOWN_ROLES:
-                r = guild.get_role(rid)
-                if r: await channel.set_permissions(r, send_messages=True)
-            save_json(CHANNEL_OVERRIDES_FILE, overrides)
-            await log_moderation(guild, "CHANNEL LOCK", channel, interaction.user, reason, f"Duration: {time or 'Indefinite'}")
-            await interaction.response.send_message(f"Locked {channel.mention}.", ephemeral=True)
-        except Exception as e:
-            try: await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
-            except Exception: pass
+@app_commands.describe(channel="Channel to lock", reason="Reason", time="Duration (optional)")
+async def lock(interaction: discord.Interaction, channel: discord.TextChannel, reason: str, time: str = None):
+    try:
+        if not has_role(interaction.user, LOCKDOWN_ROLES):
+            await interaction.response.send_message("Your rank is too low.", ephemeral=True)
+            return
 
-    @bot.tree.command(name="unlock", description="Unlock a channel")
-    @app_commands.describe(channel="Channel to unlock", reason="Reason")
-    async def unlock(interaction: discord.Interaction, channel: discord.TextChannel, reason: str = ""):
-        try:
-            if not has_role(interaction.user, LOCKDOWN_ROLES):
-                await interaction.response.send_message("Your rank is too low.", ephemeral=True); return
-            guild = interaction.guild
-            overrides = load_json(CHANNEL_OVERRIDES_FILE)
-            cid = str(channel.id)
-            if cid in overrides:
-                for rid_str, perms in overrides[cid].items():
-                    r = guild.get_role(int(rid_str))
-                    if r: await channel.set_permissions(r, send_messages=perms.get("send"))
-                del overrides[cid]
-                save_json(CHANNEL_OVERRIDES_FILE, overrides)
-            else:
-                await channel.set_permissions(guild.default_role, send_messages=True)
-            await log_moderation(guild, "CHANNEL UNLOCK", channel, interaction.user, reason)
-            await interaction.response.send_message(f"Unlocked {channel.mention}.", ephemeral=True)
-        except Exception as e:
-            try: await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
-            except Exception: pass
+        guild = interaction.guild
+        overrides = load_json(CHANNEL_OVERRIDES_FILE)
+        cid = str(channel.id)
 
-    @bot.tree.command(name="lockdown_start", description="Lock down the entire server")
-    @app_commands.describe(reason="Reason")
-    async def lockdown_start(interaction: discord.Interaction, reason: str = ""):
-        try:
-            if not has_role(interaction.user, LOCKDOWN_ROLES):
-                await interaction.response.send_message("Your rank is too low.", ephemeral=True); return
-            guild = interaction.guild
-            overrides = load_json(CHANNEL_OVERRIDES_FILE)
-            for cid in LOCKDOWN_CHANNELS:
-                ch = guild.get_channel(cid)
-                if ch:
-                    overrides.setdefault(str(cid), {})
-                    for role, ow in ch.overwrites.items():
-                        if isinstance(role, discord.Role):
-                            overrides[str(cid)][str(role.id)] = {"send": ow.send_messages.value if ow.send_messages else None}
-                    await ch.set_permissions(guild.default_role, send_messages=False)
-                    for rid in LOCKDOWN_ROLES:
-                        r = guild.get_role(rid)
-                        if r: await ch.set_permissions(r, send_messages=True)
-            save_json(CHANNEL_OVERRIDES_FILE, overrides)
-            await log_moderation(guild, "LOCKDOWN START", guild, interaction.user, reason)
-            await interaction.response.send_message("Server lockdown started.", ephemeral=True)
-        except Exception as e:
-            try: await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
-            except Exception: pass
+        overrides.setdefault(cid, {})
 
-    @bot.tree.command(name="lockdown_end", description="End server lockdown")
-    @app_commands.describe(reason="Reason")
-    async def lockdown_end(interaction: discord.Interaction, reason: str = ""):
+        # Save current permissions safely
+        for role, ow in channel.overwrites.items():
+            if isinstance(role, discord.Role):
+                overrides[cid][str(role.id)] = {
+                    "send": ow.send_messages
+                }
+
+        # Lock channel
+        await channel.set_permissions(guild.default_role, send_messages=False)
+
+        # Keep staff roles able to talk
+        for rid in LOCKDOWN_ROLES:
+            r = guild.get_role(rid)
+            if r:
+                await channel.set_permissions(r, send_messages=True)
+
+        save_json(CHANNEL_OVERRIDES_FILE, overrides)
+
+        await log_moderation(
+            guild,
+            "CHANNEL LOCK",
+            channel,
+            interaction.user,
+            reason,
+            f"Duration: {time or 'Indefinite'}"
+        )
+
+        await interaction.response.send_message(f"🔒 Locked {channel.mention}.", ephemeral=True)
+
+    except Exception as e:
         try:
-            if not has_role(interaction.user, LOCKDOWN_ROLES):
-                await interaction.response.send_message("Your rank is too low.", ephemeral=True); return
-            guild = interaction.guild
-            overrides = load_json(CHANNEL_OVERRIDES_FILE)
-            for cid in LOCKDOWN_CHANNELS:
-                ch = guild.get_channel(cid)
-                if ch:
-                    cid_str = str(cid)
-                    if cid_str in overrides:
-                        for rid_str, perms in overrides[cid_str].items():
-                            r = guild.get_role(int(rid_str))
-                            if r: await ch.set_permissions(r, send_messages=perms.get("send"))
-                        del overrides[cid_str]
-                    else:
-                        await ch.set_permissions(guild.default_role, send_messages=True)
+            await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
+        except:
+            pass
+
+
+@bot.tree.command(name="unlock", description="Unlock a channel")
+@app_commands.describe(channel="Channel to unlock", reason="Reason")
+async def unlock(interaction: discord.Interaction, channel: discord.TextChannel, reason: str = ""):
+    try:
+        if not has_role(interaction.user, LOCKDOWN_ROLES):
+            await interaction.response.send_message("Your rank is too low.", ephemeral=True)
+            return
+
+        guild = interaction.guild
+        overrides = load_json(CHANNEL_OVERRIDES_FILE)
+        cid = str(channel.id)
+
+        if cid in overrides:
+            for rid_str, perms in overrides[cid].items():
+                r = guild.get_role(int(rid_str))
+                if r:
+                    await channel.set_permissions(r, send_messages=perms.get("send"))
+
+            del overrides[cid]
             save_json(CHANNEL_OVERRIDES_FILE, overrides)
-            await log_moderation(guild, "LOCKDOWN END", guild, interaction.user, reason)
-            await interaction.response.send_message("Server lockdown ended.", ephemeral=True)
-        except Exception as e:
-            try: await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
-            except Exception: pass
+        else:
+            await channel.set_permissions(guild.default_role, send_messages=True)
+
+        await log_moderation(guild, "CHANNEL UNLOCK", channel, interaction.user, reason)
+        await interaction.response.send_message(f"🔓 Unlocked {channel.mention}.", ephemeral=True)
+
+    except Exception as e:
+        try:
+            await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
+        except:
+            pass
+
+
+@bot.tree.command(name="lockdown_start", description="Lock down the entire server")
+@app_commands.describe(reason="Reason")
+async def lockdown_start(interaction: discord.Interaction, reason: str = ""):
+    try:
+        if not has_role(interaction.user, LOCKDOWN_ROLES):
+            await interaction.response.send_message("Your rank is too low.", ephemeral=True)
+            return
+
+        guild = interaction.guild
+        overrides = load_json(CHANNEL_OVERRIDES_FILE)
+
+        for cid in LOCKDOWN_CHANNELS:
+            ch = guild.get_channel(cid)
+            if ch:
+                cid_str = str(cid)
+                overrides.setdefault(cid_str, {})
+
+                for role, ow in ch.overwrites.items():
+                    if isinstance(role, discord.Role):
+                        overrides[cid_str][str(role.id)] = {
+                            "send": ow.send_messages
+                        }
+
+                await ch.set_permissions(guild.default_role, send_messages=False)
+
+                for rid in LOCKDOWN_ROLES:
+                    r = guild.get_role(rid)
+                    if r:
+                        await ch.set_permissions(r, send_messages=True)
+
+        save_json(CHANNEL_OVERRIDES_FILE, overrides)
+
+        await log_moderation(guild, "LOCKDOWN START", guild, interaction.user, reason)
+        await interaction.response.send_message("🚨 Server lockdown started.", ephemeral=True)
+
+    except Exception as e:
+        try:
+            await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
+        except:
+            pass
+
+
+@bot.tree.command(name="lockdown_end", description="End server lockdown")
+@app_commands.describe(reason="Reason")
+async def lockdown_end(interaction: discord.Interaction, reason: str = ""):
+    try:
+        if not has_role(interaction.user, LOCKDOWN_ROLES):
+            await interaction.response.send_message("Your rank is too low.", ephemeral=True)
+            return
+
+        guild = interaction.guild
+        overrides = load_json(CHANNEL_OVERRIDES_FILE)
+
+        for cid in LOCKDOWN_CHANNELS:
+            ch = guild.get_channel(cid)
+            if ch:
+                cid_str = str(cid)
+
+                if cid_str in overrides:
+                    for rid_str, perms in overrides[cid_str].items():
+                        r = guild.get_role(int(rid_str))
+                        if r:
+                            await ch.set_permissions(r, send_messages=perms.get("send"))
+
+                    del overrides[cid_str]
+                else:
+                    await ch.set_permissions(guild.default_role, send_messages=True)
+
+        save_json(CHANNEL_OVERRIDES_FILE, overrides)
+
+        await log_moderation(guild, "LOCKDOWN END", guild, interaction.user, reason)
+        await interaction.response.send_message("🔓 Server lockdown ended.", ephemeral=True)
+
+    except Exception as e:
+        try:
+            await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
+        except:
+            pass
+
 
     # ── History ───────────────────────────────────────────────────────────────
 
