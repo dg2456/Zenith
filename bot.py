@@ -39,23 +39,6 @@ class ZenithBot(commands.Bot):
 
 bot = ZenithBot()
 
-# ── Web server for Render ──────────────────────────────────────────────────
-async def health_check(request):
-    return web.Response(text="Bot is running")
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", health_check)
-
-    port = int(os.environ.get("PORT", 10000))
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-
-    site = web.TCPSite(runner, host="0.0.0.0", port=port)
-    await site.start()
-
-    print(f"Web server started on port {port}")
 
 # Channel IDs
 MODERATION_LOG_CHANNEL = 1497742120080117781
@@ -193,11 +176,6 @@ async def on_ready():
             name="Zenith Development"
         )
     )
-
-    if not hasattr(bot, 'web_started'):
-        bot.web_started = True
-        asyncio.create_task(start_web_server())
-
 
 @bot.event
 async def on_message(message):
@@ -1023,18 +1001,13 @@ async def say(interaction: discord.Interaction, channel: discord.TextChannel, me
         await log_moderation(guild, "SAY COMMAND", channel, interaction.user, f"Message: {message}")
         await interaction.response.send_message(f"Message sent to {channel.mention}", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"Failed to send message: {str(e)}", ephemeral=# ── Run ────────────────────────────────────────────────────────────────────
+        await interaction.response.send_message(f"Failed to send message: {str(e)}", ephemeral=True)
 
-from aiohttp import web
-import asyncio
-import os
-import discord
+# ── Run ────────────────────────────────────────────────────────────────────
 
-# Health check route
 async def health_check(request):
     return web.Response(text="Bot is running")
 
-# Start Render web server
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/", health_check)
