@@ -792,12 +792,16 @@ async def start_web_server():
     port = int(os.environ.get("PORT", 10000))
 
     runner = web.AppRunner(app_web)
-    await runner.setup()
 
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
+    try:
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        log(f"[WEB] Running on port {port}")
 
-    log(f"[WEB] Server running on port {port}")
+    except Exception as e:
+        log(f"[WEB ERROR] {e}")
+
 
 
 
