@@ -1023,16 +1023,43 @@ async def say(interaction: discord.Interaction, channel: discord.TextChannel, me
         await log_moderation(guild, "SAY COMMAND", channel, interaction.user, f"Message: {message}")
         await interaction.response.send_message(f"Message sent to {channel.mention}", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"Failed to send message: {str(e)}", ephemeral=True)
+        await interaction.response.send_message(f"Failed to send message: {str(e)}", ephemeral=# ── Run ────────────────────────────────────────────────────────────────────
 
-# ── Run ────────────────────────────────────────────────────────────────────
+from aiohttp import web
+import asyncio
+import os
+import discord
+
+# Health check route
+async def health_check(request):
+    return web.Response(text="Bot is running")
+
+# Start Render web server
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", health_check)
+
+    port = int(os.environ.get("PORT", 10000))
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    site = web.TCPSite(runner, host="0.0.0.0", port=port)
+    await site.start()
+
+    print(f"Web server started on port {port}")
 
 async def main():
+    # Start web server FIRST for Render
+    await start_web_server()
+
     delay = 10
+
     while True:
         try:
             async with bot:
                 await bot.start(TOKEN)
+
         except discord.errors.HTTPException as e:
             if e.status == 429:
                 print(f"[Zenith] Rate limited by Discord/Cloudflare. Retrying in {delay}s...")
@@ -1040,6 +1067,7 @@ async def main():
                 delay = min(delay * 2, 300)
             else:
                 raise
+
         except Exception as e:
             print(f"[Zenith] Connection error: {e}. Retrying in {delay}s...")
             await asyncio.sleep(delay)
@@ -1048,4 +1076,5 @@ async def main():
 if __name__ == "__main__":
     if not TOKEN:
         raise RuntimeError("DISCORD_TOKEN is not set in your .env file")
+
     asyncio.run(main())
