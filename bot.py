@@ -15,30 +15,64 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 
 GUILD_ID = 1497396093506551909
 
-# Bot setup
+# Bot setup with proper intents
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.guilds = True
+intents.moderation = True
 
 # ── ZenithBot class ────────────────────────────────────────────────────────
 class ZenithBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="/", intents=intents)
+        super().__init__(
+            command_prefix="/",
+            intents=intents,
+            help_command=None,  # Disable default help since we're using slash commands
+            sync_commands=True
+        )
+        self.synced = False
 
     async def setup_hook(self):
+        """Load extensions and sync slash commands"""
+        # Load cogs
         for cog in ("cogs.licenses", "cogs.moderation", "cogs.admin"):
             try:
                 await self.load_extension(cog)
+                print(f"[Zenith] Loaded cog: {cog}")
             except Exception as e:
                 print(f"[Zenith] Could not load {cog}: {e}")
 
-        guild = discord.Object(id=GUILD_ID)
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
-        print(f"[Zenith] Synced slash commands to guild {GUILD_ID}")
+        # Sync slash commands to guild
+        try:
+            guild = discord.Object(id=GUILD_ID)
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            print(f"[Zenith] Synced {len(synced)} slash commands to guild {GUILD_ID}")
+            self.synced = True
+        except Exception as e:
+            print(f"[Zenith] Failed to sync commands: {e}")
+
+    async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        """Global error handler for slash commands"""
+        if isinstance(error, app_commands.MissingPermissions):
+            await interaction.response.send_message(
+                "You don't have permission to use this command.",
+                ephemeral=True
+            )
+        elif isinstance(error, app_commands.MissingAnyRole):
+            await interaction.response.send_message(
+                "You don't have the required role for this command.",
+                ephemeral=True
+            )
+        else:
+            print(f"[Zenith] Command error: {error}")
+            await interaction.response.send_message(
+                f"An error occurred: {str(error)}",
+                ephemeral=True
+            )
 
 bot = ZenithBot()
-
 
 # Channel IDs
 MODERATION_LOG_CHANNEL = 1497742120080117781
@@ -84,9 +118,11 @@ def save_json(filename, data):
         json.dump(data, f, indent=4)
 
 def has_role(member, role_ids):
+    """Check if member has any of the specified roles"""
     return any(role.id in role_ids for role in member.roles)
 
 async def log_moderation(guild, action, user, moderator, reason="", additional_notes=""):
+    """Log moderation actions to the designated channel"""
     channel = guild.get_channel(MODERATION_LOG_CHANNEL)
     if channel:
         embed = discord.Embed(
@@ -104,6 +140,7 @@ async def log_moderation(guild, action, user, moderator, reason="", additional_n
         await channel.send(embed=embed)
 
 async def log_role_change(guild, action, user, details=""):
+    """Log role and channel changes"""
     channel = guild.get_channel(ROLE_LOG_CHANNEL)
     if channel:
         embed = discord.Embed(
@@ -118,6 +155,7 @@ async def log_role_change(guild, action, user, details=""):
         await channel.send(embed=embed)
 
 async def add_warning(guild, user, moderator, reason):
+    """Add a warning to a user and handle auto-ban at 5 warnings"""
     user_data = load_json(USER_DATA_FILE)
     user_id = str(user.id)
     
@@ -150,29 +188,65 @@ async def add_warning(guild, user, moderator, reason):
     
     return warnings
 
+# ── Bot Events ─────────────────────────────────────────────────────────────
+
 @bot.event
 async def on_ready():
+    """Called when bot is ready and connected to Discord"""
+    print(f"\n{'='*50}")
     print(f"[Zenith] Logged in as {bot.user} (ID: {bot.user.id})")
-    print(f"[Zenith] Bot is ONLINE")
-    print(f"[Zenith] Registered slash commands: {[cmd.name for cmd in bot.tree.get_commands()]}")
+    print(f"[Zenith] Bot is ONLINE ✓")
+    print(f"[Zenith] Guilds: {len(bot.guilds)}")
+    print(f"[Zenith] Synced: {bot.synced}")
+    
+    # Get all commands
+    all_commands = await bot.tree.find_commands(None, None)
+    print(f"[Zenith] Registered slash commands: {len(all_commands)}")
+    for cmd in all_commands:
+        print(f"  - /{cmd.qualified_name}")
+    print(f"{'='*50}\n")
 
+    # Update bot status with richer presence
+    await update_bot_status()
+
+@tasks.loop(minutes=5)
+async def update_bot_status():
+    """Update bot status every 5 minutes"""
+    activities = [
+        discord.Activity(type=discord.ActivityType.watching, name="Zenith Development"),
+        discord.Activity(type=discord.ActivityType.listening, name="/help for commands"),
+        discord.Activity(type=discord.ActivityType.playing, name="with moderation tools"),
+        discord.Activity(type=discord.ActivityType.watching, name=f"{len(bot.guilds)} servers"),
+    ]
+    
+    # Rotate through activities
+    import random
+    activity = random.choice(activities)
+    
     await bot.change_presence(
         status=discord.Status.online,
-        activity=discord.Activity(
-            type=discord.ActivityType.watching,
-            name="Zenith Development"
-        )
+        activity=activity
     )
-    print(f"[Zenith] Status set to online")
+    print(f"[Zenith] Status updated: {activity.name}")
 
+# Start the status update loop when bot is ready
+@bot.event
+async def on_ready_once():
+    """Run once when bot is ready"""
+    if not update_bot_status.is_running():
+        update_bot_status.start()
+
+# Event: on_message (for non-slash commands and message logging)
 @bot.event
 async def on_message(message):
+    """Handle message events (invite filtering, etc.)"""
     if message.author == bot.user:
         return
     
     whitelist = load_json(WHITELIST_FILE)
     is_whitelisted = str(message.author.id) in whitelist
     
+    # Filter invite links
     if not is_whitelisted and ("discord.gg/" in message.content or "discord.com/invite/" in message.content):
         await message.delete()
         try:
@@ -185,6 +259,7 @@ async def on_message(message):
 
 @bot.event
 async def on_message_edit(before, after):
+    """Log edited messages"""
     if before.author == bot.user:
         return
     
@@ -203,6 +278,7 @@ async def on_message_edit(before, after):
 
 @bot.event
 async def on_message_delete(message):
+    """Log deleted messages"""
     if message.author == bot.user:
         return
     
@@ -220,11 +296,19 @@ async def on_message_delete(message):
 
 # ── Moderation Commands ────────────────────────────────────────────────────
 
-@bot.tree.command(name="ban", description="Ban a user")
-@app_commands.describe(user="User to ban", reason="Reason for ban", delete_option="Message deletion period (1d/5d/7d)")
+@bot.tree.command(
+    name="ban",
+    description="Ban a user from the server"
+)
+@app_commands.describe(
+    user="User to ban",
+    reason="Reason for ban",
+    delete_option="Message deletion period (1d/5d/7d)"
+)
 async def ban(interaction: discord.Interaction, user: discord.User, reason: str, delete_option: str = None):
+    """Ban a user with optional message history deletion"""
     if not has_role(interaction.user, MODERATION_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     whitelist = load_json(WHITELIST_FILE)
@@ -235,6 +319,7 @@ async def ban(interaction: discord.Interaction, user: discord.User, reason: str,
     guild = interaction.guild
     ban_tracker = load_json(BAN_TRACKER_FILE)
     
+    # Rate limiting for non-immune users
     if not has_role(interaction.user, BAN_LIMIT_IMMUNE):
         current_time = datetime.now().timestamp()
         tracker_key = str(interaction.user.id)
@@ -255,6 +340,7 @@ async def ban(interaction: discord.Interaction, user: discord.User, reason: str,
         remaining = 3 - len(ban_tracker[tracker_key])
         await interaction.user.send(f"Ban executed. You have {remaining} ban(s) remaining in this 10-minute window.")
     
+    # Parse delete option
     delete_days = 0
     if delete_option == "1d":
         delete_days = 1
@@ -271,13 +357,20 @@ async def ban(interaction: discord.Interaction, user: discord.User, reason: str,
         pass
     
     await log_moderation(guild, "BAN", user, interaction.user, reason, f"Delete messages: {delete_days} days")
-    await interaction.response.send_message(f"User {user} has been banned.", ephemeral=True)
+    await interaction.response.send_message(f"✓ User {user} has been banned.", ephemeral=True)
 
-@bot.tree.command(name="mute", description="Mute a user")
-@app_commands.describe(user="User to mute", reason="Reason for mute")
+@bot.tree.command(
+    name="mute",
+    description="Mute a user for 1 hour"
+)
+@app_commands.describe(
+    user="User to mute",
+    reason="Reason for mute"
+)
 async def mute(interaction: discord.Interaction, user: discord.User, reason: str):
+    """Mute a user temporarily"""
     if not has_role(interaction.user, MODERATION_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     whitelist = load_json(WHITELIST_FILE)
@@ -315,13 +408,20 @@ async def mute(interaction: discord.Interaction, user: discord.User, reason: str
         pass
     
     await log_moderation(guild, "MUTE", user, interaction.user, reason)
-    await interaction.response.send_message(f"User {user} has been muted.", ephemeral=True)
+    await interaction.response.send_message(f"✓ User {user} has been muted.", ephemeral=True)
 
-@bot.tree.command(name="warn", description="Warn a user")
-@app_commands.describe(user="User to warn", reason="Reason for warning")
+@bot.tree.command(
+    name="warn",
+    description="Warn a user (5 warnings = auto-ban)"
+)
+@app_commands.describe(
+    user="User to warn",
+    reason="Reason for warning"
+)
 async def warn(interaction: discord.Interaction, user: discord.User, reason: str):
+    """Warn a user"""
     if not has_role(interaction.user, MODERATION_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     whitelist = load_json(WHITELIST_FILE)
@@ -334,15 +434,23 @@ async def warn(interaction: discord.Interaction, user: discord.User, reason: str
     
     warnings = await add_warning(guild, member, interaction.user, reason)
     await log_moderation(guild, "WARN", member, interaction.user, reason, f"Total warnings: {warnings}/5")
-    await interaction.response.send_message(f"User {user} has been warned. ({warnings}/5)", ephemeral=True)
+    await interaction.response.send_message(f"✓ User {user} has been warned. ({warnings}/5)", ephemeral=True)
 
 # ── Ranking Commands ───────────────────────────────────────────────────────
 
-@bot.tree.command(name="promote", description="Promote a user")
-@app_commands.describe(user="User to promote", reason="Reason for promotion", new_rank="New rank to assign")
+@bot.tree.command(
+    name="promote",
+    description="Promote a user to a new rank"
+)
+@app_commands.describe(
+    user="User to promote",
+    reason="Reason for promotion",
+    new_rank="New rank to assign"
+)
 async def promote(interaction: discord.Interaction, user: discord.User, reason: str, new_rank: discord.Role):
+    """Promote a user to a new rank"""
     if not has_role(interaction.user, RANKING_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     guild = interaction.guild
@@ -380,18 +488,26 @@ async def promote(interaction: discord.Interaction, user: discord.User, reason: 
         await channel.send(embed=embed, content=member.mention)
     
     try:
-        await member.send(f"You have been promoted to {new_rank.mention}! Reason: {reason}")
+        await member.send(f"Congratulations! You have been promoted to {new_rank.mention}!\nReason: {reason}")
     except:
         pass
     
     await log_role_change(guild, "PROMOTION", member, f"New rank: {new_rank.mention}")
-    await interaction.response.send_message(f"User {user} has been promoted.", ephemeral=True)
+    await interaction.response.send_message(f"✓ User {user} has been promoted.", ephemeral=True)
 
-@bot.tree.command(name="infract", description="Infract a user")
-@app_commands.describe(user="User to infract", reason="Reason for infraction", infraction_type="Type: strike, warning, or demotion")
+@bot.tree.command(
+    name="infract",
+    description="Infract a user for policy violations"
+)
+@app_commands.describe(
+    user="User to infract",
+    reason="Reason for infraction",
+    infraction_type="Type: strike, warning, or demotion"
+)
 async def infract(interaction: discord.Interaction, user: discord.User, reason: str, infraction_type: str):
+    """Infract a user"""
     if not has_role(interaction.user, RANKING_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     guild = interaction.guild
@@ -426,14 +542,17 @@ async def infract(interaction: discord.Interaction, user: discord.User, reason: 
         await channel.send(embed=embed, content=member.mention)
     
     try:
-        await member.send(f"You have received an infraction ({infraction_type}) in {guild.name}. Reason: {reason}")
+        await member.send(f"You have received an infraction ({infraction_type}) in {guild.name}.\nReason: {reason}")
     except:
         pass
     
     await log_role_change(guild, "INFRACTION", member, f"Type: {infraction_type}")
-    await interaction.response.send_message(f"User {user} has been infracted.", ephemeral=True)
+    await interaction.response.send_message(f"✓ User {user} has been infracted.", ephemeral=True)
 
-@bot.tree.command(name="rank", description="Modify user roles")
+@bot.tree.command(
+    name="rank",
+    description="Modify user roles"
+)
 @app_commands.describe(
     user="User to modify",
     role_add_1="First role to add (optional)",
@@ -453,8 +572,9 @@ async def rank(
     role_remove_2: Optional[discord.Role] = None,
     role_remove_3: Optional[discord.Role] = None
 ):
+    """Modify user roles in bulk"""
     if not has_role(interaction.user, RANKING_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     guild = interaction.guild
@@ -484,15 +604,23 @@ async def rank(
         details += f"Removed: {', '.join(roles_removed)}"
     
     await log_role_change(guild, "RANK MODIFICATION", member, details)
-    await interaction.response.send_message(f"User {user} roles have been modified.", ephemeral=True)
+    await interaction.response.send_message(f"✓ User {user} roles have been modified.", ephemeral=True)
 
 # ── Lockdown Commands ──────────────────────────────────────────────────────
 
-@bot.tree.command(name="lock", description="Lock a channel")
-@app_commands.describe(channel="Channel to lock", reason="Reason for lock", time="Lock duration (optional)")
+@bot.tree.command(
+    name="lock",
+    description="Lock a channel"
+)
+@app_commands.describe(
+    channel="Channel to lock",
+    reason="Reason for lock",
+    time="Lock duration (optional)"
+)
 async def lock(interaction: discord.Interaction, channel: discord.TextChannel, reason: str, time: str = None):
+    """Lock a channel from regular users"""
     if not has_role(interaction.user, LOCKDOWN_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     guild = interaction.guild
@@ -503,6 +631,7 @@ async def lock(interaction: discord.Interaction, channel: discord.TextChannel, r
     if channel_id not in overrides:
         overrides[channel_id] = {}
     
+    # Save current permissions
     for role, overwrite in channel.overwrites.items():
         if isinstance(role, discord.Role):
             overrides[channel_id][str(role.id)] = {
@@ -510,6 +639,7 @@ async def lock(interaction: discord.Interaction, channel: discord.TextChannel, r
                 "read": overwrite.read_messages.value if overwrite.read_messages else None
             }
     
+    # Lock for everyone except mods
     await channel.set_permissions(guild.default_role, send_messages=False)
     
     for role_id in LOCKDOWN_ROLES:
@@ -520,13 +650,20 @@ async def lock(interaction: discord.Interaction, channel: discord.TextChannel, r
     save_json(CHANNEL_OVERRIDES_FILE, overrides)
     
     await log_moderation(guild, "CHANNEL LOCK", channel, interaction.user, reason, f"Duration: {time if time else 'Indefinite'}")
-    await interaction.response.send_message(f"Channel {channel.mention} has been locked.", ephemeral=True)
+    await interaction.response.send_message(f"✓ Channel {channel.mention} has been locked.", ephemeral=True)
 
-@bot.tree.command(name="unlock", description="Unlock a channel")
-@app_commands.describe(channel="Channel to unlock", reason="Reason for unlock")
+@bot.tree.command(
+    name="unlock",
+    description="Unlock a channel"
+)
+@app_commands.describe(
+    channel="Channel to unlock",
+    reason="Reason for unlock"
+)
 async def unlock(interaction: discord.Interaction, channel: discord.TextChannel, reason: str = ""):
+    """Unlock a previously locked channel"""
     if not has_role(interaction.user, LOCKDOWN_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     guild = interaction.guild
@@ -545,17 +682,20 @@ async def unlock(interaction: discord.Interaction, channel: discord.TextChannel,
         await channel.set_permissions(guild.default_role, send_messages=True)
     
     await log_moderation(guild, "CHANNEL UNLOCK", channel, interaction.user, reason)
-    await interaction.response.send_message(f"Channel {channel.mention} has been unlocked.", ephemeral=True)
+    await interaction.response.send_message(f"✓ Channel {channel.mention} has been unlocked.", ephemeral=True)
 
-@bot.tree.command(name="lockdown_start", description="Start server lockdown")
+@bot.tree.command(
+    name="lockdown_start",
+    description="Lock down the entire server"
+)
 @app_commands.describe(reason="Reason for lockdown")
 async def lockdown_start(interaction: discord.Interaction, reason: str = ""):
+    """Start server-wide lockdown"""
     if not has_role(interaction.user, LOCKDOWN_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     guild = interaction.guild
-    
     overrides = load_json(CHANNEL_OVERRIDES_FILE)
     
     for channel_id in LOCKDOWN_CHANNELS:
@@ -582,13 +722,17 @@ async def lockdown_start(interaction: discord.Interaction, reason: str = ""):
     save_json(CHANNEL_OVERRIDES_FILE, overrides)
     
     await log_moderation(guild, "LOCKDOWN START", guild, interaction.user, reason)
-    await interaction.response.send_message("Server lockdown started.", ephemeral=True)
+    await interaction.response.send_message("✓ Server lockdown started.", ephemeral=True)
 
-@bot.tree.command(name="lockdown_end", description="End server lockdown")
+@bot.tree.command(
+    name="lockdown_end",
+    description="End server lockdown"
+)
 @app_commands.describe(reason="Reason for unlock")
 async def lockdown_end(interaction: discord.Interaction, reason: str = ""):
+    """End server-wide lockdown"""
     if not has_role(interaction.user, LOCKDOWN_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     guild = interaction.guild
@@ -611,15 +755,19 @@ async def lockdown_end(interaction: discord.Interaction, reason: str = ""):
     save_json(CHANNEL_OVERRIDES_FILE, overrides)
     
     await log_moderation(guild, "LOCKDOWN END", guild, interaction.user, reason)
-    await interaction.response.send_message("Server lockdown ended.", ephemeral=True)
+    await interaction.response.send_message("✓ Server lockdown ended.", ephemeral=True)
 
 # ── User History Command ───────────────────────────────────────────────────
 
-@bot.tree.command(name="user_history", description="View user history")
+@bot.tree.command(
+    name="user_history",
+    description="View detailed user history"
+)
 @app_commands.describe(user="User to check")
 async def user_history(interaction: discord.Interaction, user: discord.User):
+    """View a user's moderation and activity history"""
     if not has_role(interaction.user, HISTORY_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     user_data = load_json(USER_DATA_FILE)
@@ -646,15 +794,21 @@ async def user_history(interaction: discord.Interaction, user: discord.User):
     
     if history_text:
         embed.add_field(name="History", value=history_text[:2048], inline=False)
+    else:
+        embed.add_field(name="History", value="No history recorded", inline=False)
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ── Application Commands ───────────────────────────────────────────────────
 
-@bot.tree.command(name="application_channel", description="Open application menu")
+@bot.tree.command(
+    name="application_channel",
+    description="Open application menu"
+)
 async def application_channel(interaction: discord.Interaction):
+    """Select and start an application"""
     if not has_role(interaction.user, APPLICATION_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     class AppSelectView(discord.ui.View):
@@ -679,31 +833,39 @@ async def application_channel(interaction: discord.Interaction):
     view = AppSelectView()
     await interaction.response.send_message("Select an application:", view=view, ephemeral=True)
 
-@bot.tree.command(name="application_open", description="Open an application")
+@bot.tree.command(
+    name="application_open",
+    description="Open an application for submissions"
+)
 @app_commands.describe(application_name="Application to open (Customer Support/Risk Management/Public Relations)")
 async def application_open(interaction: discord.Interaction, application_name: str):
+    """Open an application"""
     if not has_role(interaction.user, APPLICATION_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     open_apps = load_json(OPEN_APPS_FILE)
     open_apps[application_name] = True
     save_json(OPEN_APPS_FILE, open_apps)
     
-    await interaction.response.send_message(f"The {application_name} application is now open.", ephemeral=True)
+    await interaction.response.send_message(f"✓ The {application_name} application is now open.", ephemeral=True)
 
-@bot.tree.command(name="application_close", description="Close an application")
+@bot.tree.command(
+    name="application_close",
+    description="Close an application"
+)
 @app_commands.describe(application_name="Application to close (Customer Support/Risk Management/Public Relations)")
 async def application_close(interaction: discord.Interaction, application_name: str):
+    """Close an application"""
     if not has_role(interaction.user, APPLICATION_ROLES):
-        await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     open_apps = load_json(OPEN_APPS_FILE)
     open_apps[application_name] = False
     save_json(OPEN_APPS_FILE, open_apps)
     
-    await interaction.response.send_message(f"The {application_name} application is now closed.", ephemeral=True)
+    await interaction.response.send_message(f"✓ The {application_name} application is now closed.", ephemeral=True)
 
 APPLICATIONS = {
     "Public Relations": {
@@ -742,6 +904,7 @@ APPLICATIONS = {
 }
 
 async def start_application(interaction: discord.Interaction, app_name: str):
+    """Start an application process"""
     user = interaction.user
     
     applications_data = load_json("applications.json")
@@ -758,7 +921,7 @@ async def start_application(interaction: discord.Interaction, app_name: str):
     save_json("applications.json", applications_data)
     
     embed = discord.Embed(
-        title=app_name,
+        title=f"{app_name} Application",
         description=f"This application will expire in 1 hour.",
         color=discord.Color.blue()
     )
@@ -767,6 +930,7 @@ async def start_application(interaction: discord.Interaction, app_name: str):
     await ask_question(user, app_id, 0)
 
 async def ask_question(user: discord.User, app_id: str, question_index: int):
+    """Ask the next application question"""
     applications_data = load_json("applications.json")
     
     if app_id not in applications_data:
@@ -805,6 +969,7 @@ async def ask_question(user: discord.User, app_id: str, question_index: int):
         save_json("applications.json", applications_data)
 
 async def submit_application(user: discord.User, app_id: str):
+    """Submit an application for review"""
     applications_data = load_json("applications.json")
     
     if app_id not in applications_data:
@@ -825,7 +990,7 @@ async def submit_application(user: discord.User, app_id: str):
         response = app_data["responses"][i] if i < len(app_data["responses"]) else "No response"
         embed.add_field(name=f"Q{i+1}: {question}", value=response, inline=False)
     
-    guild = bot.get_guild(list(bot.guilds)[0].id) if bot.guilds else None
+    guild = bot.get_guild(GUILD_ID)
     
     if guild:
         pending_channel = guild.get_channel(APPLICATIONS_CHANNEL)
@@ -850,9 +1015,10 @@ async def submit_application(user: discord.User, app_id: str):
             app_data["status"] = "pending_review"
             save_json("applications.json", applications_data)
     
-    await user.send(f"Your {app_name} application has been submitted for review!")
+    await user.send(f"✓ Your {app_name} application has been submitted for review!")
 
 class AppReasonModal(discord.ui.Modal):
+    """Modal for reviewing applications"""
     def __init__(self, action, user, app_id, approved):
         super().__init__(title=f"{action} Application")
         self.action = action
@@ -927,13 +1093,17 @@ class AppReasonModal(discord.ui.Modal):
                 if role:
                     await member.add_roles(role)
         
-        await interaction.response.send_message(f"Application {'accepted' if self.approved else 'denied'}.", ephemeral=True)
+        await interaction.response.send_message(f"✓ Application {'accepted' if self.approved else 'denied'}.", ephemeral=True)
 
 # ── Whitelist Commands ─────────────────────────────────────────────────────
 
-@bot.tree.command(name="whitelist_add", description="Add user to whitelist (immune to moderation)")
+@bot.tree.command(
+    name="whitelist_add",
+    description="Add user to whitelist (immune to moderation)"
+)
 @app_commands.describe(user="User to whitelist")
 async def whitelist_add(interaction: discord.Interaction, user: discord.User):
+    """Add a user to the whitelist"""
     if not has_role(interaction.user, ADMIN_ROLES):
         await interaction.response.send_message("Only admins can use this command", ephemeral=True)
         return
@@ -948,13 +1118,17 @@ async def whitelist_add(interaction: discord.Interaction, user: discord.User):
         guild = interaction.guild
         await log_moderation(guild, "WHITELIST ADD", user, interaction.user, "User added to whitelist")
         
-        await interaction.response.send_message(f"User {user} has been added to whitelist.", ephemeral=True)
+        await interaction.response.send_message(f"✓ User {user} has been added to whitelist.", ephemeral=True)
     else:
         await interaction.response.send_message(f"User {user} is already whitelisted.", ephemeral=True)
 
-@bot.tree.command(name="whitelist_remove", description="Remove user from whitelist")
+@bot.tree.command(
+    name="whitelist_remove",
+    description="Remove user from whitelist"
+)
 @app_commands.describe(user="User to remove from whitelist")
 async def whitelist_remove(interaction: discord.Interaction, user: discord.User):
+    """Remove a user from the whitelist"""
     if not has_role(interaction.user, ADMIN_ROLES):
         await interaction.response.send_message("Only admins can use this command", ephemeral=True)
         return
@@ -969,17 +1143,24 @@ async def whitelist_remove(interaction: discord.Interaction, user: discord.User)
         guild = interaction.guild
         await log_moderation(guild, "WHITELIST REMOVE", user, interaction.user, "User removed from whitelist")
         
-        await interaction.response.send_message(f"User {user} has been removed from whitelist.", ephemeral=True)
+        await interaction.response.send_message(f"✓ User {user} has been removed from whitelist.", ephemeral=True)
     else:
         await interaction.response.send_message(f"User {user} is not whitelisted.", ephemeral=True)
 
 # ── Say Command ────────────────────────────────────────────────────────────
 
-@bot.tree.command(name="say", description="Make the bot say a message in a channel")
-@app_commands.describe(channel="Channel to send message to", message="Message to send")
+@bot.tree.command(
+    name="say",
+    description="Make the bot say a message in a channel"
+)
+@app_commands.describe(
+    channel="Channel to send message to",
+    message="Message to send"
+)
 async def say(interaction: discord.Interaction, channel: discord.TextChannel, message: str):
+    """Send a message as the bot"""
     if not has_role(interaction.user, RANKING_ROLES):
-        await interaction.response.send_message("Rank too low to execute this command", ephemeral=True)
+        await interaction.response.send_message("Your rank is too low to execute this command", ephemeral=True)
         return
     
     guild = interaction.guild
@@ -987,16 +1168,93 @@ async def say(interaction: discord.Interaction, channel: discord.TextChannel, me
     try:
         await channel.send(message)
         await log_moderation(guild, "SAY COMMAND", channel, interaction.user, f"Message: {message}")
-        await interaction.response.send_message(f"Message sent to {channel.mention}", ephemeral=True)
+        await interaction.response.send_message(f"✓ Message sent to {channel.mention}", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"Failed to send message: {str(e)}", ephemeral=True)
 
-# ── Run ────────────────────────────────────────────────────────────────────
+# ── Help Command ───────────────────────────────────────────────────────────
+
+@bot.tree.command(
+    name="help",
+    description="Display bot commands and features"
+)
+async def help_command(interaction: discord.Interaction):
+    """Display help information"""
+    embed = discord.Embed(
+        title="Zenith Bot - Command Help",
+        description="Here are all available slash commands",
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    
+    embed.add_field(
+        name="📋 Moderation Commands",
+        value="`/ban` - Ban a user\n`/mute` - Mute a user\n`/warn` - Warn a user",
+        inline=False
+    )
+    embed.add_field(
+        name="📊 Ranking Commands",
+        value="`/promote` - Promote a user\n`/infract` - Infract a user\n`/rank` - Modify user roles",
+        inline=False
+    )
+    embed.add_field(
+        name="🔒 Lockdown Commands",
+        value="`/lock` - Lock a channel\n`/unlock` - Unlock a channel\n`/lockdown_start` - Start server lockdown\n`/lockdown_end` - End server lockdown",
+        inline=False
+    )
+    embed.add_field(
+        name="📝 Application Commands",
+        value="`/application_channel` - Open application menu\n`/application_open` - Open applications\n`/application_close` - Close applications",
+        inline=False
+    )
+    embed.add_field(
+        name="🔍 Utility Commands",
+        value="`/user_history` - View user history\n`/whitelist_add` - Whitelist user\n`/whitelist_remove` - Remove from whitelist\n`/say` - Send message as bot",
+        inline=False
+    )
+    
+    embed.set_footer(text="Use /command_name for more information")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ── Server Status Command ──────────────────────────────────────────────────
+
+@bot.tree.command(
+    name="status",
+    description="View bot and server status"
+)
+async def status(interaction: discord.Interaction):
+    """Display bot and server status"""
+    guild = interaction.guild
+    
+    embed = discord.Embed(
+        title="Zenith Bot Status",
+        color=discord.Color.green(),
+        timestamp=datetime.now()
+    )
+    
+    embed.add_field(name="Bot Status", value="🟢 Online", inline=True)
+    embed.add_field(name="Latency", value=f"{round(bot.latency * 1000)}ms", inline=True)
+    embed.add_field(name="Guilds", value=len(bot.guilds), inline=True)
+    
+    if guild:
+        embed.add_field(name="Server Members", value=guild.member_count, inline=True)
+        embed.add_field(name="Server ID", value=guild.id, inline=True)
+        embed.add_field(name="Server Name", value=guild.name, inline=True)
+    
+    embed.add_field(name="Commands Synced", value="✓ Yes", inline=True)
+    embed.add_field(name="Bot Version", value="v1.2.0", inline=True)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ── Web Server (for Render deployment) ─────────────────────────────────────
 
 async def health_check(request):
-    return web.Response(text="Bot is running")
+    """Health check endpoint"""
+    return web.Response(text="Zenith Bot is running ✓")
 
 async def start_web_server():
+    """Start web server for deployment"""
     app = web.Application()
     app.router.add_get("/", health_check)
 
@@ -1008,9 +1266,12 @@ async def start_web_server():
     site = web.TCPSite(runner, host="0.0.0.0", port=port)
     await site.start()
 
-    print(f"Web server started on port {port}")
+    print(f"[Zenith] Web server started on port {port}")
+
+# ── Main Bot Startup ───────────────────────────────────────────────────────
 
 async def main():
+    """Main bot startup function with auto-reconnect"""
     # Start web server FIRST for Render
     await start_web_server()
 
@@ -1019,6 +1280,7 @@ async def main():
     while True:
         try:
             async with bot:
+                print("[Zenith] Attempting to connect to Discord...")
                 await bot.start(TOKEN)
 
         except discord.errors.HTTPException as e:
