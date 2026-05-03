@@ -9,13 +9,11 @@ from typing import Optional
 from dotenv import load_dotenv
 from aiohttp import web
 
-# Load environment variables
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
 GUILD_ID = 1497396093506551909
 
-# Bot setup
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -30,7 +28,6 @@ class ZenithBot(commands.Bot):
                 await self.load_extension(cog)
             except Exception as e:
                 print(f"[Zenith] Could not load {cog}: {e}")
-
         guild = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
@@ -122,7 +119,12 @@ async def add_warning(guild, user, moderator, reason):
     if user_id not in user_data:
         user_data[user_id] = {"warnings": 0, "mutes": [], "history": []}
     user_data[user_id]["warnings"] += 1
-    user_data[user_id]["history"].append({"type": "warning", "reason": reason, "moderator": str(moderator.id), "timestamp": datetime.now().isoformat()})
+    user_data[user_id]["history"].append({
+        "type": "warning",
+        "reason": reason,
+        "moderator": str(moderator.id),
+        "timestamp": datetime.now().isoformat()
+    })
     warnings = user_data[user_id]["warnings"]
     save_json(USER_DATA_FILE, user_data)
     try:
@@ -344,8 +346,25 @@ async def infract(interaction: discord.Interaction, user: discord.User, reason: 
     await interaction.response.send_message(f"User {user} has been infracted.", ephemeral=True)
 
 @bot.tree.command(name="rank", description="Modify user roles")
-@app_commands.describe(user="User to modify", role_add_1="First role to add (optional)", role_add_2="Second role to add (optional)", role_add_3="Third role to add (optional)", role_remove_1="First role to remove (optional)", role_remove_2="Second role to remove (optional)", role_remove_3="Third role to remove (optional)")
-async def rank(interaction: discord.Interaction, user: discord.User, role_add_1: Optional[discord.Role] = None, role_add_2: Optional[discord.Role] = None, role_add_3: Optional[discord.Role] = None, role_remove_1: Optional[discord.Role] = None, role_remove_2: Optional[discord.Role] = None, role_remove_3: Optional[discord.Role] = None):
+@app_commands.describe(
+    user="User to modify",
+    role_add_1="First role to add (optional)",
+    role_add_2="Second role to add (optional)",
+    role_add_3="Third role to add (optional)",
+    role_remove_1="First role to remove (optional)",
+    role_remove_2="Second role to remove (optional)",
+    role_remove_3="Third role to remove (optional)"
+)
+async def rank(
+    interaction: discord.Interaction,
+    user: discord.User,
+    role_add_1: Optional[discord.Role] = None,
+    role_add_2: Optional[discord.Role] = None,
+    role_add_3: Optional[discord.Role] = None,
+    role_remove_1: Optional[discord.Role] = None,
+    role_remove_2: Optional[discord.Role] = None,
+    role_remove_3: Optional[discord.Role] = None
+):
     if not has_role(interaction.user, RANKING_ROLES):
         await interaction.response.send_message("Rank to low to execute this command", ephemeral=True)
         return
@@ -385,7 +404,10 @@ async def lock(interaction: discord.Interaction, channel: discord.TextChannel, r
         overrides[channel_id] = {}
     for role, overwrite in channel.overwrites.items():
         if isinstance(role, discord.Role):
-            overrides[channel_id][str(role.id)] = {"send": overwrite.send_messages.value if overwrite.send_messages else None, "read": overwrite.read_messages.value if overwrite.read_messages else None}
+            overrides[channel_id][str(role.id)] = {
+                "send": overwrite.send_messages.value if overwrite.send_messages else None,
+                "read": overwrite.read_messages.value if overwrite.read_messages else None
+            }
     await channel.set_permissions(guild.default_role, send_messages=False)
     for role_id in LOCKDOWN_ROLES:
         role = guild.get_role(role_id)
@@ -432,7 +454,10 @@ async def lockdown_start(interaction: discord.Interaction, reason: str = ""):
                 overrides[channel_str] = {}
             for role, overwrite in channel.overwrites.items():
                 if isinstance(role, discord.Role):
-                    overrides[channel_str][str(role.id)] = {"send": overwrite.send_messages.value if overwrite.send_messages else None, "read": overwrite.read_messages.value if overwrite.read_messages else None}
+                    overrides[channel_str][str(role.id)] = {
+                        "send": overwrite.send_messages.value if overwrite.send_messages else None,
+                        "read": overwrite.read_messages.value if overwrite.read_messages else None
+                    }
             await channel.set_permissions(guild.default_role, send_messages=False)
             for role_id in LOCKDOWN_ROLES:
                 role = guild.get_role(role_id)
@@ -575,7 +600,14 @@ async def start_application(interaction: discord.Interaction, app_name: str):
     user = interaction.user
     applications_data = load_json("applications.json")
     app_id = f"{user.id}_{app_name}_{datetime.now().timestamp()}"
-    applications_data[app_id] = {"user_id": user.id, "app_name": app_name, "responses": [], "started_at": datetime.now().isoformat(), "expires_at": (datetime.now() + timedelta(hours=1)).isoformat(), "status": "in_progress"}
+    applications_data[app_id] = {
+        "user_id": user.id,
+        "app_name": app_name,
+        "responses": [],
+        "started_at": datetime.now().isoformat(),
+        "expires_at": (datetime.now() + timedelta(hours=1)).isoformat(),
+        "status": "in_progress"
+    }
     save_json("applications.json", applications_data)
     embed = discord.Embed(title=app_name, description="This application will expire in 1 hour.", color=discord.Color.blue())
     await user.send(embed=embed)
@@ -656,7 +688,11 @@ class AppReasonModal(discord.ui.Modal):
             return
         app_data = applications_data[self.app_id]
         app_name = app_data["app_name"]
-        embed = discord.Embed(title=f"{app_name} Application - {'ACCEPTED' if self.approved else 'DENIED'}", color=discord.Color.green() if self.approved else discord.Color.red(), timestamp=datetime.now())
+        embed = discord.Embed(
+            title=f"{app_name} Application - {'ACCEPTED' if self.approved else 'DENIED'}",
+            color=discord.Color.green() if self.approved else discord.Color.red(),
+            timestamp=datetime.now()
+        )
         embed.add_field(name="Applicant", value=f"{self.user.mention} ({self.user.id})", inline=False)
         embed.add_field(name="Reviewed By", value=f"{interaction.user.mention}", inline=False)
         embed.add_field(name="Reason", value=self.reason.value, inline=False)
@@ -664,7 +700,11 @@ class AppReasonModal(discord.ui.Modal):
         graded_channel = guild.get_channel(GRADED_APPS_CHANNEL)
         if graded_channel:
             await graded_channel.send(embed=embed)
-        result_embed = discord.Embed(title=f"{app_name} Application Result", description=f"Your application has been **{'ACCEPTED' if self.approved else 'DENIED'}**", color=discord.Color.green() if self.approved else discord.Color.red())
+        result_embed = discord.Embed(
+            title=f"{app_name} Application Result",
+            description=f"Your application has been **{'ACCEPTED' if self.approved else 'DENIED'}**",
+            color=discord.Color.green() if self.approved else discord.Color.red()
+        )
         result_embed.add_field(name="Reason", value=self.reason.value, inline=False)
         try:
             await self.user.send(embed=result_embed)
@@ -681,7 +721,6 @@ class AppReasonModal(discord.ui.Modal):
         app_data["result"] = "accepted" if self.approved else "denied"
         save_json("applications.json", applications_data)
         if self.approved:
-            guild = interaction.guild
             member = await guild.fetch_member(self.user.id)
             role_mappings = {
                 "Risk Management": [1497645064623493142, 1497638380337500330, 1497639703443148861],
@@ -741,18 +780,6 @@ async def say(interaction: discord.Interaction, channel: discord.TextChannel, me
         await log_moderation(guild, "SAY COMMAND", channel, interaction.user, f"Message: {message}")
         await interaction.response.send_message(f"Message sent to {channel.mention}", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"Failed to send message: {str(e)}", ephemeral=True)
-
-# ── Run ────────────────────────────────────────────────────────────────────
-
-async def main():
-    delay = 10
-    while True:
-        try:
-            async with bot:
-                await bot.start(TOKEN)
-        except discord.errors.HTTPException as e:
-            if e.status == 429:
-                print(f"[Zenith] Rate limited by Discord/Cloudflare. Retrying in {delay}s..." **...**
+        await interaction.response.send_message(f"F **...**
 
 _This response is too long to display in full._
