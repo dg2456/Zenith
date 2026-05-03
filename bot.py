@@ -193,7 +193,11 @@ async def on_ready():
             name="Zenith Development"
         )
     )
-    
+
+    if not hasattr(bot, 'web_started'):
+        bot.web_started = True
+        asyncio.create_task(start_web_server())
+
 
 @bot.event
 async def on_message(message):
@@ -1024,10 +1028,6 @@ async def say(interaction: discord.Interaction, channel: discord.TextChannel, me
 # ── Run ────────────────────────────────────────────────────────────────────
 
 async def main():
-    # Start web server immediately so Render detects the bound port
-    # regardless of Discord connection status
-    await start_web_server()
-
     delay = 10
     while True:
         try:
