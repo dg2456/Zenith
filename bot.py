@@ -781,21 +781,24 @@ class AppModal(discord.ui.Modal):
 # ── Web server ────────────────────────────────────────────────────────────────
 
 async def start_web_server():
-    """Start the health check web server with proper socket reuse and error handling."""
     app_web = web.Application()
-    
+
     async def health(req):
-        """Simple health check endpoint."""
         return web.Response(text="Zenith Bot OK")
-    
+
     app_web.router.add_get("/", health)
     app_web.router.add_get("/health", health)
-    
+
     port = int(os.environ.get("PORT", 10000))
+
     runner = web.AppRunner(app_web)
-    
-    try:
-        await runner.setup()
+    await runner.setup()
+
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+    log(f"[WEB] Server running on port {port}")
+
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
