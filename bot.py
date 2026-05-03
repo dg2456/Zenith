@@ -447,17 +447,14 @@ async def lock(interaction: discord.Interaction, channel: discord.TextChannel, r
 
         overrides.setdefault(cid, {})
 
-        # Save current permissions safely
         for role, ow in channel.overwrites.items():
             if isinstance(role, discord.Role):
                 overrides[cid][str(role.id)] = {
                     "send": ow.send_messages
                 }
 
-        # Lock channel
         await channel.set_permissions(guild.default_role, send_messages=False)
 
-        # Keep staff roles able to talk
         for rid in LOCKDOWN_ROLES:
             r = guild.get_role(rid)
             if r:
@@ -474,12 +471,15 @@ async def lock(interaction: discord.Interaction, channel: discord.TextChannel, r
             f"Duration: {time or 'Indefinite'}"
         )
 
-        await interaction.response.send_message(f"🔒 Locked {channel.mention}.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Locked {channel.mention}.",
+            ephemeral=True
+        )
 
     except Exception as e:
         try:
             await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
-        except:
+        except Exception:
             pass
 
 
@@ -503,16 +503,17 @@ async def unlock(interaction: discord.Interaction, channel: discord.TextChannel,
 
             del overrides[cid]
             save_json(CHANNEL_OVERRIDES_FILE, overrides)
+
         else:
             await channel.set_permissions(guild.default_role, send_messages=True)
 
         await log_moderation(guild, "CHANNEL UNLOCK", channel, interaction.user, reason)
-        await interaction.response.send_message(f"🔓 Unlocked {channel.mention}.", ephemeral=True)
+        await interaction.response.send_message(f"Unlocked {channel.mention}.", ephemeral=True)
 
     except Exception as e:
         try:
             await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
-        except:
+        except Exception:
             pass
 
 
@@ -530,12 +531,11 @@ async def lockdown_start(interaction: discord.Interaction, reason: str = ""):
         for cid in LOCKDOWN_CHANNELS:
             ch = guild.get_channel(cid)
             if ch:
-                cid_str = str(cid)
-                overrides.setdefault(cid_str, {})
+                overrides.setdefault(str(cid), {})
 
                 for role, ow in ch.overwrites.items():
                     if isinstance(role, discord.Role):
-                        overrides[cid_str][str(role.id)] = {
+                        overrides[str(cid)][str(role.id)] = {
                             "send": ow.send_messages
                         }
 
@@ -548,13 +548,23 @@ async def lockdown_start(interaction: discord.Interaction, reason: str = ""):
 
         save_json(CHANNEL_OVERRIDES_FILE, overrides)
 
-        await log_moderation(guild, "LOCKDOWN START", guild, interaction.user, reason)
-        await interaction.response.send_message("🚨 Server lockdown started.", ephemeral=True)
+        await log_moderation(
+            guild,
+            "LOCKDOWN START",
+            guild,
+            interaction.user,
+            reason
+        )
+
+        await interaction.response.send_message(
+            "Server lockdown started.",
+            ephemeral=True
+        )
 
     except Exception as e:
         try:
             await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
-        except:
+        except Exception:
             pass
 
 
@@ -581,18 +591,29 @@ async def lockdown_end(interaction: discord.Interaction, reason: str = ""):
                             await ch.set_permissions(r, send_messages=perms.get("send"))
 
                     del overrides[cid_str]
+
                 else:
                     await ch.set_permissions(guild.default_role, send_messages=True)
 
         save_json(CHANNEL_OVERRIDES_FILE, overrides)
 
-        await log_moderation(guild, "LOCKDOWN END", guild, interaction.user, reason)
-        await interaction.response.send_message("🔓 Server lockdown ended.", ephemeral=True)
+        await log_moderation(
+            guild,
+            "LOCKDOWN END",
+            guild,
+            interaction.user,
+            reason
+        )
+
+        await interaction.response.send_message(
+            "Server lockdown ended.",
+            ephemeral=True
+        )
 
     except Exception as e:
         try:
             await interaction.response.send_message(f"Error: {str(e)[:100]}", ephemeral=True)
-        except:
+        except Exception:
             pass
 
 
