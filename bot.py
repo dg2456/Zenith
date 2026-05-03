@@ -7,6 +7,7 @@ import sys
 import time
 import asyncio
 import traceback
+import socket
 from datetime import datetime, timedelta
 from typing import Optional
 from dotenv import load_dotenv
@@ -781,15 +782,47 @@ class AppModal(discord.ui.Modal):
 # ── Web server ────────────────────────────────────────────────────────────────
 
 async def start_web_server():
+    """Start the health check web server with proper socket reuse and error handling."""
     app_web = web.Application()
-    async def health(req): return web.Response(text="Zenith Bot OK")
+    
+    async def health(req):
+        """Simple health check endpoint."""
+        return web.Response(text="Zenith Bot OK")
+    
     app_web.router.add_get("/", health)
     app_web.router.add_get("/health", health)
+    
     port = int(os.environ.get("PORT", 10000))
     runner = web.AppRunner(app_web)
-    await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", port).start()
-    log(f"[SERVER] Listening on port {port}")
+    
+    try:
+        await runner.setup()
+        
+        # Create socket with SO_REUSEADDR to avoid "address already in use"
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        try:
+            sock.bind(("0.0.0.0", port))
+            sock.listen(128)
+            log(f"[SERVER] Socket bound to port {port}")
+        except OSError as e:
+            log(f"[ERROR] Failed to bind socket on port {port}: {e}")
+            await runner.cleanup()
+            raise
+        
+        # Create and start the TCP site
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        log(f"[SERVER] Listening on 0.0.0.0:{port} (health check)")
+        
+    except Exception as e:
+        log(f"[ERROR] Web server startup failed: {e}")
+        try:
+            await runner.cleanup()
+        except Exception:
+            pass
+        raise
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
