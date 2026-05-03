@@ -803,7 +803,7 @@ async def start_web_server():
 async def run_bot():
     bot = ZenithBot()
     setup_commands(bot)
-    await start_web_server()
+
     async with bot:
         await bot.start(TOKEN)
 
