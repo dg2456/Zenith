@@ -152,30 +152,18 @@ async def add_warning(guild, user, moderator, reason):
 
 @bot.event
 async def on_ready():
-    await asyncio.sleep(2)
-    
-    try:
-        await bot.tree.sync()
-    except discord.errors.HTTPException as e:
-        if e.status == 429:
-            retry_after = int(e.response.headers.get('Retry-After', 60))
-            print(f"Rate limited during sync. Waiting {retry_after} seconds...")
-            await asyncio.sleep(retry_after)
-            try:
-                await bot.tree.sync()
-            except Exception as retry_error:
-                print(f"Retry failed: {retry_error}")
-    except Exception as e:
-        print(f"Error syncing commands: {e}")
-    
     print(f"[Zenith] Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"[Zenith] Bot is ONLINE")
+    print(f"[Zenith] Registered slash commands: {[cmd.name for cmd in bot.tree.get_commands()]}")
 
     await bot.change_presence(
+        status=discord.Status.online,
         activity=discord.Activity(
             type=discord.ActivityType.watching,
             name="Zenith Development"
         )
     )
+    print(f"[Zenith] Status set to online")
 
 @bot.event
 async def on_message(message):
