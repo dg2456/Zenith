@@ -1066,9 +1066,4 @@ async def say(interaction: discord.Interaction, channel: discord.TextChannel, me
     except Exception as e:
         await interaction.response.send_message(f"Failed to send message: {str(e)}", ephemeral=True)
 
-# ── Run ────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    if not TOKEN:
-        raise RuntimeError("DISCORD_TOKEN is not set in your .env file")
-    asyncio.run(bot.start(TOKEN))
+True)
