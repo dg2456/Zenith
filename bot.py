@@ -35,11 +35,11 @@ class ZenithBot(commands.Bot):
     def __init__(self):
         print("[INIT] Creating ZenithBot instance", file=sys.stderr)
         super().__init__(
-            command_prefix="/",
-            intents=intents,
-            help_command=None,
-            sync_commands=True
-        )
+    command_prefix="/",
+    intents=intents,
+    help_command=None
+)
+
         self.synced = False
         self.ready_once = False
 
